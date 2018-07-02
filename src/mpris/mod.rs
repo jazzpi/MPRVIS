@@ -54,7 +54,7 @@ impl MPRIS {
                                                "/org/mpris/MediaPlayer2", 500);
         let metadata = player.get("org.mpris.MediaPlayer2.Player", "Metadata")
                              .unwrap();
-        
+
         Self::parse_metadata(&metadata)
     }
 
@@ -66,7 +66,7 @@ impl MPRIS {
             featured: None,
             art: None,
         };
-        
+
         if let Some(title) = raw.get("xesam:title").and_then(|t| t.as_str()) {
             if title.len() > 0 {
                 data.title = Some(title.to_string());
@@ -77,11 +77,11 @@ impl MPRIS {
                 data.art = Some(art.to_string());
             }
         }
-        
+
         let (artist, featured) = Self::parse_artists(raw);
         data.artist = artist;
         data.featured = featured;
-        
+
         data
     }
 
@@ -89,7 +89,7 @@ impl MPRIS {
                      -> (Option<String>, Option<Vec<String>>) {
         let mut artist = None;
         let mut featured : Option<Vec<String>> = None;
-        
+
         {
             let mut parse_iter = |it : Box<Iterator<Item = &arg::RefArg>>| {
                 for a in it {
@@ -121,7 +121,7 @@ impl MPRIS {
                 parse_iter(it);
             }
         }
-        
+
         (artist, featured)
     }
 }
@@ -131,11 +131,11 @@ impl MPRIS {
 mod tests {
     use super::*;
     use dbus::arg::{Variant, RefArg};
-    
+
     fn make_variant<T: 'static + RefArg>(val: T) -> Variant<Box<RefArg>> {
         Variant(Box::new(val))
     }
-    
+
     #[test]
     fn it_parses_simple_data() {
         let mut raw : HashMap<String, Variant<Box<RefArg>>> = HashMap::new();
@@ -150,7 +150,7 @@ mod tests {
         raw.insert("mpris:trackid".to_string(), make_variant("spotify:track:7tFAnpi9kCBSiNkA6ZPSiZ".to_string()));
         raw.insert("xesam:discNumber".to_string(), make_variant(1));
         raw.insert("xesam:trackNumber".to_string(), make_variant(4));
-        
+
         let metadata = MPRIS::parse_metadata(&raw);
         assert_eq!(Metadata {
             title: Some("Brother".to_string()),
@@ -159,7 +159,7 @@ mod tests {
             art: Some("https://open.spotify.com/image/f568c1436c8a9063d21efdd901e8ce6fdc1029e3".to_string()),
         }, metadata);
     }
-    
+
     #[test]
     fn it_parses_with_multiple_artists() {
         let mut raw : HashMap<String, Variant<Box<RefArg>>> = HashMap::new();

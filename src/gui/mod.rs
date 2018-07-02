@@ -27,7 +27,7 @@ impl<'a> EventCollector {
             events_tx,
         }
     }
-    
+
     pub fn start(&mut self) {
         // Ugly hack since we need our mpris rx in the thread and we can't move
         // receivers between threads
@@ -53,7 +53,7 @@ impl<'a> EventCollector {
                 }
             }
         }));
-        
+
         mpris::MPRIS::start(tmp_rx.recv().expect(
             "Couldn't receive MPRIS TX from MPRIS RX thread"));
     }
@@ -87,21 +87,21 @@ impl GUI {
         let ui = RefCell::new(conrod::UiBuilder::new([width as f64, height as f64]).build());
 
         let ids = Ids::new(ui.borrow_mut().widget_id_generator());
-        
+
         // TODO: Add font
         ui.borrow_mut().fonts.insert_from_file("/home/jasper/.cargo/registry/src/github.com-1ecc6299db9ec823/conrod-0.60.0/assets/fonts/NotoSans/NotoSans-Regular.ttf").unwrap();
-        
+
         let renderer = RefCell::new(conrod::backend::glium::Renderer::new(&display).unwrap());
-        
+
         let image_map = conrod::image::Map::<glium::texture::Texture2d>::new();
-        
+
         let (events_tx, events_rx) = mpsc::channel();
-        
+
         let event_collector = EventCollector::new(
             events_loop.borrow().create_proxy(), events_tx);
-        
+
         let events = RefCell::new(vec![]);
-        
+
         GUI {
             events_loop,
             display,
@@ -114,18 +114,18 @@ impl GUI {
             events,
         }
     }
-    
+
     pub fn run_loop(&mut self) {
         self.event_collector.start();
 
         'render: loop {
             let mut events = self.events.borrow_mut();
             events.clear();
-            
+
             // Get new events since the last frame
             let mut events_loop = self.events_loop.borrow_mut();
             events_loop.poll_events(|event| events.push(Event::Backend(event)));
-            
+
             // Wait for one event
             if events.is_empty() {
                 events_loop.run_forever(|event| {
@@ -133,9 +133,9 @@ impl GUI {
                     glium::glutin::ControlFlow::Break
                 });
             }
-            
+
             let mut ui = self.ui.borrow_mut();
-            
+
             // Process events
             for event in events.drain(..) {
                 match event {
@@ -154,7 +154,7 @@ impl GUI {
                     },
                     _ => (),
                 }
-                
+
                 if let Event::Backend(event) = event {
                     let input = match conrod::backend::winit::convert_event(event, &self.display) {
                         None => continue,
@@ -163,15 +163,15 @@ impl GUI {
                     ui.handle_event(input);
                 }
             }
-            
+
             let ui = &mut ui.set_widgets();
-            
+
             widget::Text::new("Hello World!")
                 .middle_of(ui.window)
                 .color(conrod::color::WHITE)
                 .font_size(32)
                 .set(self.ids.text, ui);
-            
+
             if let Some(primitives) = ui.draw_if_changed() {
                 let mut renderer = self.renderer.borrow_mut();
                 renderer.fill(&self.display, primitives, &self.image_map);

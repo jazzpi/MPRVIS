@@ -1,0 +1,8 @@
+[package]
+name = "mprvis"
+version = "0.1.0"
+authors = ["jazzpi <jasper@mezzo.de>"]
+
+[dependencies]
+
+dbus = "0.6.2"

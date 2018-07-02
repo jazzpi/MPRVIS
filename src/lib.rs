@@ -1,4 +1,6 @@
 extern crate dbus;
+#[macro_use]
+extern crate conrod;
 
 use self::dbus::{Connection, BusType};
 
@@ -7,6 +9,7 @@ pub fn init() -> Connection {
 }
 
 pub mod metadata;
+pub mod gui;
 
 #[cfg(test)]
 mod tests {

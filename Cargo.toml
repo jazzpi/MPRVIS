@@ -6,3 +6,7 @@ authors = ["jazzpi <jasper@mezzo.de>"]
 [dependencies]
 
 dbus = "0.6.2"
+
+[dependencies.conrod]
+version = "0.60.0"
+features = ["glium", "winit"]

@@ -8,7 +8,7 @@ pub fn init() -> Connection {
     Connection::get_private(BusType::Session).unwrap()
 }
 
-pub mod metadata;
+pub mod mpris;
 pub mod gui;
 
 #[cfg(test)]

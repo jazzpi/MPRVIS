@@ -1,9 +1,24 @@
 extern crate dbus;
 
-use self::dbus::arg;
-use self::dbus::arg::RefArg;
+use self::dbus::{Connection, BusType};
+use self::dbus::arg::{self, RefArg};
 use self::dbus::stdintf::org_freedesktop_dbus::Properties;
 use std::collections::HashMap;
+use std::sync::mpsc;
+use std::thread;
+
+#[derive(Debug)]
+pub enum PlaybackStatus {
+    Playing,
+    Paused,
+    Stopped,
+}
+
+#[derive(Debug)]
+pub enum Event {
+    Data(Metadata),
+    Playback(PlaybackStatus),
+}
 
 #[derive(Debug, PartialEq)]
 pub struct Metadata {
@@ -13,79 +28,104 @@ pub struct Metadata {
     art: Option<String>,
 }
 
-pub fn get_current(conn : &dbus::Connection) -> Metadata {
-    let player = conn.with_path("org.mpris.MediaPlayer2.spotify",
-                                "/org/mpris/MediaPlayer2", 500);
-    let metadata = player.get("org.mpris.MediaPlayer2.Player", "Metadata")
-                         .unwrap();
-    
-    parse_metadata(&metadata)
+pub struct MPRIS {
+    connection: dbus::Connection,
+    tx: mpsc::Sender<Event>,
 }
 
-fn parse_metadata(raw : &HashMap<String, arg::Variant<Box<arg::RefArg>>>) -> Metadata {
-    let mut data = Metadata {
-        title: None,
-        artist: None,
-        featured: None,
-        art: None,
-    };
-    
-    if let Some(title) = raw.get("xesam:title").and_then(|t| t.as_str()) {
-        if title.len() > 0 {
-            data.title = Some(title.to_string());
-        }
-    }
-    if let Some(art) = raw.get("mpris:artUrl").and_then(|a| a.as_str()) {
-        if art.len() > 0 {
-            data.art = Some(art.to_string());
-        }
-    }
-    
-    let (artist, featured) = parse_artists(raw);
-    data.artist = artist;
-    data.featured = featured;
-    
-    data
-}
+impl MPRIS {
+    pub fn start(tx: mpsc::Sender<Event>) {
+        let tx = tx.clone();
 
-fn parse_artists(raw : &HashMap<String, arg::Variant<Box<arg::RefArg>>>) -> (Option<String>, Option<Vec<String>>) {
-    let mut artist = None;
-    let mut featured : Option<Vec<String>> = None;
-    
-    {
-        let mut parse_iter = |it : Box<Iterator<Item = &arg::RefArg>>| {
-            for a in it {
-                if let Some(a) = a.as_str() {
-                    if a.len() > 0 {
-                        if let Some(ref artist) = artist {
-                            if artist != a {
-                                if let Some(ref mut featured) = featured {
-                                    let a = a.to_string();
-                                    if !featured.contains(&a) {
-                                        featured.push(a);
+        thread::spawn(move || {
+            let mpris = MPRIS {
+                connection: Connection::get_private(BusType::Session).unwrap(),
+                tx,
+            };
+
+            if mpris.tx.send(Event::Data(mpris.get_current())).is_err() {
+                return;
+            }
+        });
+    }
+
+    pub fn get_current(&self) -> Metadata {
+        let player = self.connection.with_path("org.mpris.MediaPlayer2.spotify",
+                                               "/org/mpris/MediaPlayer2", 500);
+        let metadata = player.get("org.mpris.MediaPlayer2.Player", "Metadata")
+                             .unwrap();
+        
+        Self::parse_metadata(&metadata)
+    }
+
+    fn parse_metadata(raw : &HashMap<String, arg::Variant<Box<arg::RefArg>>>)
+                      -> Metadata {
+        let mut data = Metadata {
+            title: None,
+            artist: None,
+            featured: None,
+            art: None,
+        };
+        
+        if let Some(title) = raw.get("xesam:title").and_then(|t| t.as_str()) {
+            if title.len() > 0 {
+                data.title = Some(title.to_string());
+            }
+        }
+        if let Some(art) = raw.get("mpris:artUrl").and_then(|a| a.as_str()) {
+            if art.len() > 0 {
+                data.art = Some(art.to_string());
+            }
+        }
+        
+        let (artist, featured) = Self::parse_artists(raw);
+        data.artist = artist;
+        data.featured = featured;
+        
+        data
+    }
+
+    fn parse_artists(raw : &HashMap<String, arg::Variant<Box<arg::RefArg>>>)
+                     -> (Option<String>, Option<Vec<String>>) {
+        let mut artist = None;
+        let mut featured : Option<Vec<String>> = None;
+        
+        {
+            let mut parse_iter = |it : Box<Iterator<Item = &arg::RefArg>>| {
+                for a in it {
+                    if let Some(a) = a.as_str() {
+                        if a.len() > 0 {
+                            if let Some(ref artist) = artist {
+                                if artist != a {
+                                    if let Some(ref mut featured) = featured {
+                                        let a = a.to_string();
+                                        if !featured.contains(&a) {
+                                            featured.push(a);
+                                        }
+                                    } else {
+                                        featured = Some(vec![a.to_string()]);
                                     }
-                                } else {
-                                    featured = Some(vec![a.to_string()]);
                                 }
+                            } else {
+                                artist = Some(a.to_string());
                             }
-                        } else {
-                            artist = Some(a.to_string());
                         }
                     }
                 }
-            }
-        };
+            };
 
-        if let Some(it) = raw.get("xesam:albumArtist").and_then(|a| a.0.as_iter()) {
-            parse_iter(it);
+            if let Some(it) = raw.get("xesam:albumArtist").and_then(|a| a.0.as_iter()) {
+                parse_iter(it);
+            }
+            if let Some(it) = raw.get("xesam:artist").and_then(|a| a.0.as_iter()) {
+                parse_iter(it);
+            }
         }
-        if let Some(it) = raw.get("xesam:artist").and_then(|a| a.0.as_iter()) {
-            parse_iter(it);
-        }
+        
+        (artist, featured)
     }
-    
-    (artist, featured)
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -111,7 +151,7 @@ mod tests {
         raw.insert("xesam:discNumber".to_string(), make_variant(1));
         raw.insert("xesam:trackNumber".to_string(), make_variant(4));
         
-        let metadata = parse_metadata(&raw);
+        let metadata = MPRIS::parse_metadata(&raw);
         assert_eq!(Metadata {
             title: Some("Brother".to_string()),
             artist: Some("Murder By Death".to_string()),
@@ -141,7 +181,7 @@ mod tests {
             "Nellie Casman".to_string(),
         ]));
 
-        let metadata = parse_metadata(&raw);
+        let metadata = MPRIS::parse_metadata(&raw);
         assert_eq!(Metadata {
             title: Some("Yossl Yossl".to_string()),
             artist: Some("David Orlowsky Trio".to_string()),

@@ -1,8 +1,63 @@
-use std::sync::Arc;
+use mpris;
+
 use std::cell::RefCell;
+use std::sync::mpsc;
+use std::thread;
 
 use conrod::{self, widget, Widget, Positionable, Colorable};
 use conrod::backend::glium::glium::{self, Surface};
+
+enum Event {
+    MPRIS(mpris::Event),
+    Backend(glium::glutin::Event),
+}
+
+struct EventCollector {
+    mpris_receiver: Option<thread::JoinHandle<()>>,
+    loop_proxy: glium::glutin::EventsLoopProxy,
+    events_tx: mpsc::Sender<Event>,
+}
+
+impl<'a> EventCollector {
+    pub fn new(loop_proxy: glium::glutin::EventsLoopProxy,
+               events_tx: mpsc::Sender<Event>) -> Self {
+        Self {
+            mpris_receiver: None,
+            loop_proxy,
+            events_tx,
+        }
+    }
+    
+    pub fn start(&mut self) {
+        // Ugly hack since we need our mpris rx in the thread and we can't move
+        // receivers between threads
+        let (tmp_tx, tmp_rx) = mpsc::channel();
+        let events_tx = self.events_tx.clone();
+        let loop_proxy = self.loop_proxy.clone();
+
+        self.mpris_receiver = Some(thread::spawn(move || {
+            let (mpris_tx, mpris_rx) = mpsc::channel();
+            tmp_tx.send(mpris_tx)
+                  .expect("Couldn't send MPRIS TX to EventCollector::start");
+
+            while let Ok(ev) = mpris_rx.recv() {
+                println!("MPRIS Event: {:?}", ev);
+                if events_tx.send(Event::MPRIS(ev)).is_ok() {
+                    if loop_proxy.wakeup().is_err() {
+                        // Events loop is gone
+                        break;
+                    }
+                } else {
+                    // Events RX is gone
+                    break;
+                }
+            }
+        }));
+        
+        mpris::MPRIS::start(tmp_rx.recv().expect(
+            "Couldn't receive MPRIS TX from MPRIS RX thread"));
+    }
+}
 
 widget_ids!(struct Ids { img, text });
 
@@ -13,7 +68,9 @@ pub struct GUI {
     ids: Ids,
     renderer: RefCell<conrod::backend::glium::Renderer>,
     image_map: conrod::image::Map<glium::texture::Texture2d>,
-    events: Arc<RefCell<Vec<glium::glutin::Event>>>,
+    event_collector: EventCollector,
+    events_rx: mpsc::Receiver<Event>,
+    events: RefCell<Vec<Event>>,
 }
 
 impl GUI {
@@ -38,7 +95,12 @@ impl GUI {
         
         let image_map = conrod::image::Map::<glium::texture::Texture2d>::new();
         
-        let events = Arc::new(RefCell::new(vec![]));
+        let (events_tx, events_rx) = mpsc::channel();
+        
+        let event_collector = EventCollector::new(
+            events_loop.borrow().create_proxy(), events_tx);
+        
+        let events = RefCell::new(vec![]);
         
         GUI {
             events_loop,
@@ -47,23 +109,27 @@ impl GUI {
             ids,
             renderer,
             image_map,
+            event_collector,
+            events_rx,
             events,
         }
     }
     
-    pub fn run_loop(&self) {
+    pub fn run_loop(&mut self) {
+        self.event_collector.start();
+
         'render: loop {
             let mut events = self.events.borrow_mut();
             events.clear();
             
             // Get new events since the last frame
             let mut events_loop = self.events_loop.borrow_mut();
-            events_loop.poll_events(|event| events.push(event));
+            events_loop.poll_events(|event| events.push(Event::Backend(event)));
             
             // Wait for one event
             if events.is_empty() {
                 events_loop.run_forever(|event| {
-                    events.push(event);
+                    events.push(Event::Backend(event));
                     glium::glutin::ControlFlow::Break
                 });
             }
@@ -72,11 +138,11 @@ impl GUI {
             
             // Process events
             for event in events.drain(..) {
-                match event.clone() {
-                    glium::glutin::Event::WindowEvent {event, ..} => {
+                match event {
+                    Event::Backend(glium::glutin::Event::WindowEvent {ref event, ..}) => {
                         match event {
-                            glium::glutin::WindowEvent::Closed |
-                            glium::glutin::WindowEvent::KeyboardInput {
+                            &glium::glutin::WindowEvent::Closed |
+                            &glium::glutin::WindowEvent::KeyboardInput {
                                 input : glium::glutin::KeyboardInput {
                                     virtual_keycode: Some(glium::glutin::VirtualKeyCode::Escape),
                                     ..
@@ -89,11 +155,13 @@ impl GUI {
                     _ => (),
                 }
                 
-                let input = match conrod::backend::winit::convert_event(event, &self.display) {
-                    None => continue,
-                    Some(input) => input,
-                };
-                ui.handle_event(input);
+                if let Event::Backend(event) = event {
+                    let input = match conrod::backend::winit::convert_event(event, &self.display) {
+                        None => continue,
+                        Some(input) => input,
+                    };
+                    ui.handle_event(input);
+                }
             }
             
             let ui = &mut ui.set_widgets();

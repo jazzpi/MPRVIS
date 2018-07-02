@@ -4,7 +4,8 @@ use std::cell::RefCell;
 use std::sync::mpsc;
 use std::thread;
 
-use conrod::{self, widget, Widget, Positionable, Colorable};
+use conrod::{self, widget, Widget, Positionable, Colorable, Sizeable};
+use conrod::position::Dimension;
 use conrod::backend::glium::glium::{self, Surface};
 
 enum Event {
@@ -59,7 +60,7 @@ impl<'a> EventCollector {
     }
 }
 
-widget_ids!(struct Ids { img, text });
+widget_ids!(struct Ids { img, song_title, song_artist, song_album, status });
 
 pub struct GUI {
     events_loop: RefCell<glium::glutin::EventsLoop>,
@@ -118,6 +119,11 @@ impl GUI {
     pub fn run_loop(&mut self) {
         self.event_collector.start();
 
+        let mut title = "No song playing!".to_string();
+        let mut artist = "".to_string();
+        let mut album = "".to_string();
+        let mut status = "Stopped".to_string();
+
         'render: loop {
             let mut events = self.events.borrow_mut();
             events.clear();
@@ -125,6 +131,15 @@ impl GUI {
             // Get new events since the last frame
             let mut events_loop = self.events_loop.borrow_mut();
             events_loop.poll_events(|event| events.push(Event::Backend(event)));
+
+            loop {
+                let res = self.events_rx.try_recv();
+                match res {
+                    Ok(ev) => events.push(ev),
+                    Err(mpsc::TryRecvError::Empty) => break,
+                    Err(mpsc::TryRecvError::Disconnected) => break 'render,
+                }
+            }
 
             // Wait for one event
             if events.is_empty() {
@@ -139,38 +154,90 @@ impl GUI {
             // Process events
             for event in events.drain(..) {
                 match event {
-                    Event::Backend(glium::glutin::Event::WindowEvent {ref event, ..}) => {
-                        match event {
-                            &glium::glutin::WindowEvent::Closed |
-                            &glium::glutin::WindowEvent::KeyboardInput {
-                                input : glium::glutin::KeyboardInput {
-                                    virtual_keycode: Some(glium::glutin::VirtualKeyCode::Escape),
-                                    ..
-                                },
-                                ..
-                            } => break 'render,
-                            _ => (),
+                    Event::MPRIS(ev) => {
+                        match ev {
+                            mpris::Event::Data(metadata) => {
+                                title = metadata.title.unwrap_or(
+                                    "No song playing!".to_string());
+                                artist = metadata.artist.unwrap_or(
+                                    "".to_string());
+                                album = metadata.album.unwrap_or(
+                                    "".to_string());
+                            },
+                            mpris::Event::Playback(playback_status) => {
+                                match playback_status {
+                                    mpris::PlaybackStatus::Paused =>
+                                        status = "Paused".to_string(),
+                                    mpris::PlaybackStatus::Playing =>
+                                        status = "Playing".to_string(),
+                                    mpris::PlaybackStatus::Stopped =>
+                                        status = "Stopped".to_string(),
+                                }
+                            }
                         }
                     },
-                    _ => (),
-                }
+                    Event::Backend(ev) => {
+                        match ev {
+                            glium::glutin::Event::WindowEvent {ref event, ..} => {
+                                match event {
+                                    &glium::glutin::WindowEvent::Closed |
+                                    &glium::glutin::WindowEvent::KeyboardInput {
+                                        input : glium::glutin::KeyboardInput {
+                                            virtual_keycode: Some(glium::glutin::VirtualKeyCode::Escape),
+                                            ..
+                                        },
+                                        ..
+                                    } => break 'render,
+                                    _ => (),
+                                }
+                            },
+                            _ => (),
+                        }
 
-                if let Event::Backend(event) = event {
-                    let input = match conrod::backend::winit::convert_event(event, &self.display) {
-                        None => continue,
-                        Some(input) => input,
-                    };
-                    ui.handle_event(input);
+                        let input = match conrod::backend::winit::convert_event(ev, &self.display) {
+                            None => continue,
+                            Some(input) => input,
+                        };
+                        ui.handle_event(input);
+                    },
                 }
             }
 
             let ui = &mut ui.set_widgets();
 
-            widget::Text::new("Hello World!")
+            let window_width = Dimension::Absolute(ui.w_of(ui.window).unwrap());
+
+            widget::Text::new(title.as_str())
                 .middle_of(ui.window)
+                .x_dimension(window_width)
+                .center_justify()
                 .color(conrod::color::WHITE)
                 .font_size(32)
-                .set(self.ids.text, ui);
+                .set(self.ids.song_title, ui);
+            widget::Text::new(artist.as_str())
+                .middle_of(ui.window)
+                .x_dimension(window_width)
+                .center_justify()
+                .down_from(self.ids.song_title, 0.0)
+                .color(conrod::color::DARK_GRAY)
+                .font_size(24)
+                .set(self.ids.song_artist, ui);
+            widget::Text::new(album.as_str())
+                .middle_of(ui.window)
+                .x_dimension(window_width)
+                .center_justify()
+                .down_from(self.ids.song_artist, 0.0)
+                .color(conrod::color::DARK_GRAY)
+                .font_size(24)
+                .set(self.ids.song_album, ui);
+
+            widget::Text::new(status.as_str())
+                .mid_bottom_with_margin_on(ui.window, 10.0)
+                .x_dimension(window_width)
+                .center_justify()
+                .color(conrod::color::DARK_GRAY)
+                .font_size(24)
+                .set(self.ids.status, ui);
 
             if let Some(primitives) = ui.draw_if_changed() {
                 let mut renderer = self.renderer.borrow_mut();

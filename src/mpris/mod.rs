@@ -22,10 +22,11 @@ pub enum Event {
 
 #[derive(Debug, PartialEq)]
 pub struct Metadata {
-    title: Option<String>,
-    artist: Option<String>,
-    featured: Option<Vec<String>>,
-    art: Option<String>,
+    pub title: Option<String>,
+    pub album: Option<String>,
+    pub artist: Option<String>,
+    pub featured: Option<Vec<String>>,
+    pub art: Option<String>,
 }
 
 pub struct MPRIS {
@@ -62,6 +63,7 @@ impl MPRIS {
                       -> Metadata {
         let mut data = Metadata {
             title: None,
+            album: None,
             artist: None,
             featured: None,
             art: None,
@@ -70,6 +72,11 @@ impl MPRIS {
         if let Some(title) = raw.get("xesam:title").and_then(|t| t.as_str()) {
             if title.len() > 0 {
                 data.title = Some(title.to_string());
+            }
+        }
+        if let Some(album) = raw.get("xesam:album").and_then(|t| t.as_str()) {
+            if album.len() > 0 {
+                data.album = Some(album.to_string());
             }
         }
         if let Some(art) = raw.get("mpris:artUrl").and_then(|a| a.as_str()) {

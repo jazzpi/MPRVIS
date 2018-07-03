@@ -6,12 +6,26 @@ use self::dbus::stdintf::org_freedesktop_dbus::Properties;
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
+use std::str::FromStr;
 
 #[derive(Debug)]
 pub enum PlaybackStatus {
     Playing,
     Paused,
     Stopped,
+}
+
+impl FromStr for PlaybackStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Playing" => Ok(PlaybackStatus::Playing),
+            "Paused" => Ok(PlaybackStatus::Paused),
+            "Stopped" => Ok(PlaybackStatus::Stopped),
+            _=> Err(format!("Unknown status {:?}", s)),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -35,6 +49,12 @@ pub struct MPRIS {
 }
 
 impl MPRIS {
+    const SIGNAL : &'static str =
+        "type='signal',sender='org.mpris.MediaPlayer2.spotify',\
+         interface='org.freedesktop.DBus.Properties',\
+         member='PropertiesChanged',path='/org/mpris/MediaPlayer2',\
+         arg0='org.mpris.MediaPlayer2.Player'";
+
     pub fn start(tx: mpsc::Sender<Event>) {
         let tx = tx.clone();
 
@@ -44,10 +64,59 @@ impl MPRIS {
                 tx,
             };
 
+            if mpris.tx.send(Event::Playback(mpris.get_status())).is_err() {
+                return;
+            }
             if mpris.tx.send(Event::Data(mpris.get_current())).is_err() {
                 return;
             }
+            mpris.connection.add_match(Self::SIGNAL).unwrap();
+
+            'main: loop {
+                for ci in mpris.connection.iter(1000) {
+                    if let dbus::ConnectionItem::Signal(sig) = ci {
+                        if sig.headers() == (
+                            dbus::MessageType::Signal,
+                            Some("/org/mpris/MediaPlayer2".to_string()),
+                            Some("org.freedesktop.DBus.Properties".to_string()),
+                            Some("PropertiesChanged".to_string()),
+                        ) {
+                            if mpris.props_changed(sig).is_err() {
+                                break 'main;
+                            }
+                        }
+                    }
+                }
+            }
         });
+    }
+
+    fn props_changed(&self, sig: dbus::Message)
+                     -> Result<(), mpsc::SendError<Event>> {
+        let raw = sig.get2::<String,
+                             HashMap<String, arg::Variant<Box<arg::RefArg>>>>()
+            .1.unwrap();
+        if let Some(status) = raw.get("PlaybackStatus") {
+            self.tx.send(Event::Playback(
+                PlaybackStatus::from_str(status.as_str().unwrap()).unwrap()
+            ))?;
+        }
+
+        if raw.contains_key("Metadata") {
+            // We could parse the message itself... But it's incredibly
+            // difficult due to dbus-rs's type system, so just fetch it again
+            self.tx.send(Event::Data(self.get_current()))?;
+        }
+
+        Ok(())
+    }
+
+    pub fn get_status(&self) -> PlaybackStatus {
+        let player = self.connection.with_path("org.mpris.MediaPlayer2.spotify",
+                                               "/org/mpris/MediaPlayer2", 500);
+        let status : String = player.get("org.mpris.MediaPlayer2.Player",
+                                         "PlaybackStatus").unwrap();
+        PlaybackStatus::from_str(status.as_str()).unwrap()
     }
 
     pub fn get_current(&self) -> Metadata {
@@ -161,6 +230,7 @@ mod tests {
         let metadata = MPRIS::parse_metadata(&raw);
         assert_eq!(Metadata {
             title: Some("Brother".to_string()),
+            album: Some("In Bocca Al Lupo".to_string()),
             artist: Some("Murder By Death".to_string()),
             featured: None,
             art: Some("https://open.spotify.com/image/f568c1436c8a9063d21efdd901e8ce6fdc1029e3".to_string()),
@@ -191,6 +261,7 @@ mod tests {
         let metadata = MPRIS::parse_metadata(&raw);
         assert_eq!(Metadata {
             title: Some("Yossl Yossl".to_string()),
+            album: Some("Klezmer Kings".to_string()),
             artist: Some("David Orlowsky Trio".to_string()),
             featured: Some(vec![
                 "David Orlowsky".to_string(), "SAMUEL STEINBERG".to_string(),

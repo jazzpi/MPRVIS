@@ -3,9 +3,13 @@ name = "mprvis"
 version = "0.1.0"
 authors = ["jazzpi <jasper@mezzo.de>"]
 
+[profile.dev]
+opt-level = 1 # We absolutely require this for image, otherwise it's plain unusable
+
 [dependencies]
 
 dbus = "0.6.2"
+image = "0.19.0"
 
 [dependencies.conrod]
 version = "0.60.0"

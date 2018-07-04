@@ -1,12 +1,13 @@
-extern crate dbus;
-
-use self::dbus::{Connection, BusType};
-use self::dbus::arg::{self, RefArg};
-use self::dbus::stdintf::org_freedesktop_dbus::Properties;
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
 use std::str::FromStr;
+
+use dbus;
+use dbus::{Connection, BusType};
+use dbus::arg::{self, RefArg};
+use dbus::stdintf::org_freedesktop_dbus::Properties;
+use image::{self, RgbaImage};
 
 #[derive(Debug)]
 pub enum PlaybackStatus {
@@ -32,6 +33,7 @@ impl FromStr for PlaybackStatus {
 pub enum Event {
     Data(Metadata),
     Playback(PlaybackStatus),
+    ArtDone(String, RgbaImage),
 }
 
 #[derive(Debug, PartialEq)]
@@ -68,6 +70,11 @@ impl MPRIS {
                 return;
             }
             if mpris.tx.send(Event::Data(mpris.get_current())).is_err() {
+                return;
+            }
+            let img = image::open("img.jpg").unwrap();
+            let img = img.to_rgba();
+            if mpris.tx.send(Event::ArtDone("".to_string(), img)).is_err() {
                 return;
             }
             mpris.connection.add_match(Self::SIGNAL).unwrap();

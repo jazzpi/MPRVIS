@@ -10,6 +10,7 @@ opt-level = 1 # We absolutely require this for image, otherwise it's plain unusa
 
 dbus = "0.6.2"
 image = "0.19.0"
+curl = "0.4.12"
 
 [dependencies.conrod]
 version = "0.60.0"

@@ -2,6 +2,7 @@ extern crate dbus;
 #[macro_use]
 extern crate conrod;
 extern crate image;
+extern crate curl;
 
 use self::dbus::{Connection, BusType};
 

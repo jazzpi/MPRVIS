@@ -1,7 +1,10 @@
+extern crate cairo;
 extern crate dbus;
-#[macro_use]
-extern crate conrod;
-extern crate image;
+extern crate gdk;
+extern crate gdk_pixbuf;
+extern crate gio;
+extern crate glib;
+extern crate gtk;
 extern crate curl;
 
 use self::dbus::{Connection, BusType};

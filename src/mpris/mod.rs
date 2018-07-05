@@ -7,10 +7,9 @@ use dbus;
 use dbus::{Connection, BusType};
 use dbus::arg::{self, RefArg};
 use dbus::stdintf::org_freedesktop_dbus::Properties;
-use image::{self, RgbaImage};
 use curl::easy::Easy;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum PlaybackStatus {
     Playing,
     Paused,
@@ -30,14 +29,15 @@ impl FromStr for PlaybackStatus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     Data(Metadata),
     Playback(PlaybackStatus),
-    ArtDone(String, RgbaImage),
+    ArtData(Vec<u8>),
+    ArtDone(bool),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Metadata {
     pub title: Option<String>,
     pub album: Option<String>,
@@ -144,7 +144,6 @@ impl MPRIS {
             handle.get(true).unwrap();
             handle.follow_location(true).unwrap();
             let mut status = None;
-            let mut body = Vec::new();
             {
                 let mut transfer = handle.transfer();
                 transfer.header_function(|new_data| {
@@ -157,19 +156,17 @@ impl MPRIS {
                     true
                 }).unwrap();
                 transfer.write_function(|new_data| {
-                    body.extend_from_slice(new_data);
+                    tx.send(Event::ArtData(new_data.to_vec()));
                     Ok(new_data.len())
                 }).unwrap();
                 transfer.perform().unwrap();
             }
-            if status != Some("200 OK".to_string()) {
+            if status == Some("200 OK".to_string()) {
+                tx.send(Event::ArtDone(true));
+            } else {
                 eprintln!("Error while fetching art: {:?}", status);
                 return
             }
-            let img = image::load_from_memory(&body).unwrap().to_rgba();
-            println!("Got art with dimensions {:?} from {}",
-                     img.dimensions(), url);
-            tx.send(Event::ArtDone(url, img)).unwrap();
         });
     }
 

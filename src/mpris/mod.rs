@@ -38,7 +38,7 @@ pub enum Event {
     ArtDone(bool),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Eq, Hash)]
 pub struct Metadata {
     pub title: Option<String>,
     pub album: Option<String>,

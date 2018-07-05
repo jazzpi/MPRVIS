@@ -2,8 +2,13 @@ use mpris;
 
 use std::sync::mpsc;
 use std::thread;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 
 use curl::easy::Easy;
+
+mod fetcher;
+use self::fetcher::FetcherExt;
 
 pub fn start(done_tx: mpsc::Sender<mpris::Event>)
              -> mpsc::Sender<mpris::Metadata> {
@@ -23,69 +28,31 @@ pub fn start(done_tx: mpsc::Sender<mpris::Event>)
 struct Manager {
     done_tx: mpsc::Sender<mpris::Event>,
     request_rx: mpsc::Receiver<mpris::Metadata>,
+    fetcher: fetcher::Fetcher,
 }
 
 impl Manager {
     pub fn new(done_tx: mpsc::Sender<mpris::Event>,
                request_rx: mpsc::Receiver<mpris::Metadata>) -> Self {
+        let fetcher = fetcher::Fetcher::new();
         Manager {
             done_tx,
             request_rx,
+            fetcher,
         }
     }
 
     pub fn run(&mut self) {
         for data in &self.request_rx {
-            self.fetch_art(&data);
-        }
-    }
-
-    fn fetch_art(&self, data: &mpris::Metadata) {
-        if let Some(ref url) = data.art {
-            if url.starts_with("https://open.spotify.com/image") {
-                self.fetch_spot_art(url);
-            } else if url.starts_with("http://") ||
-                      url.starts_with("https://") {
-                self.fetch_web_art(url);
-            } else {
-                eprintln!("Unknown artUrl scheme: {}", url);
-            }
-        }
-    }
-
-    fn fetch_spot_art(&self, url: &str) {
-        self.fetch_web_art(&url.replacen("open.spotify.com", "i.scdn.co", 1));
-    }
-
-    fn fetch_web_art(&self, url: &str) {
-        let url = url.to_string();
-        let mut handle = Easy::new();
-        handle.url(&url).unwrap();
-        handle.get(true).unwrap();
-        handle.follow_location(true).unwrap();
-        let mut status = None;
-        {
-            let mut transfer = handle.transfer();
-            transfer.header_function(|new_data| {
-                // new_data is always one header line
-                if let Ok(s) = String::from_utf8(new_data.to_vec()) {
-                    if s.starts_with("HTTP/1.1") {
-                        status = Some(s[9..].trim().to_string());
-                    }
+            match self.fetcher.fetch(&data, self.done_tx.clone()) {
+                Ok(_) => {
+                    self.done_tx.send(mpris::Event::ArtDone(true));
+                },
+                Err(err) => {
+                    eprintln!("Error while fetching art: {}", err);
+                    self.done_tx.send(mpris::Event::ArtDone(false));
                 }
-                true
-            }).unwrap();
-            transfer.write_function(|new_data| {
-                self.done_tx.send(mpris::Event::ArtData(new_data.to_vec()));
-                Ok(new_data.len())
-            }).unwrap();
-            transfer.perform().unwrap();
-        }
-        if status == Some("200 OK".to_string()) {
-            self.done_tx.send(mpris::Event::ArtDone(true));
-        } else {
-            eprintln!("Error while fetching art: {:?}", status);
-            return
+            }
         }
     }
 }

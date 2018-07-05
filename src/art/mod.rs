@@ -59,36 +59,33 @@ impl Manager {
 
     fn fetch_web_art(&self, url: &str) {
         let url = url.to_string();
-        let tx = self.done_tx.clone();
-        thread::spawn(move || {
-            let mut handle = Easy::new();
-            handle.url(&url).unwrap();
-            handle.get(true).unwrap();
-            handle.follow_location(true).unwrap();
-            let mut status = None;
-            {
-                let mut transfer = handle.transfer();
-                transfer.header_function(|new_data| {
-                    // new_data is always one header line
-                    if let Ok(s) = String::from_utf8(new_data.to_vec()) {
-                        if s.starts_with("HTTP/1.1") {
-                            status = Some(s[9..].trim().to_string());
-                        }
+        let mut handle = Easy::new();
+        handle.url(&url).unwrap();
+        handle.get(true).unwrap();
+        handle.follow_location(true).unwrap();
+        let mut status = None;
+        {
+            let mut transfer = handle.transfer();
+            transfer.header_function(|new_data| {
+                // new_data is always one header line
+                if let Ok(s) = String::from_utf8(new_data.to_vec()) {
+                    if s.starts_with("HTTP/1.1") {
+                        status = Some(s[9..].trim().to_string());
                     }
-                    true
-                }).unwrap();
-                transfer.write_function(|new_data| {
-                    tx.send(mpris::Event::ArtData(new_data.to_vec()));
-                    Ok(new_data.len())
-                }).unwrap();
-                transfer.perform().unwrap();
-            }
-            if status == Some("200 OK".to_string()) {
-                tx.send(mpris::Event::ArtDone(true));
-            } else {
-                eprintln!("Error while fetching art: {:?}", status);
-                return
-            }
-        });
+                }
+                true
+            }).unwrap();
+            transfer.write_function(|new_data| {
+                self.done_tx.send(mpris::Event::ArtData(new_data.to_vec()));
+                Ok(new_data.len())
+            }).unwrap();
+            transfer.perform().unwrap();
+        }
+        if status == Some("200 OK".to_string()) {
+            self.done_tx.send(mpris::Event::ArtDone(true));
+        } else {
+            eprintln!("Error while fetching art: {:?}", status);
+            return
+        }
     }
 }

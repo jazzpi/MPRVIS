@@ -6,7 +6,7 @@ use std::sync::mpsc;
 fn main() {
     let (tx, rx) = mpsc::channel();
     let gui = thread::spawn(|| {
-        unsafe { mprvis::gui::start(800, 600, tx); }
+        unsafe { mprvis::gui::start(tx); }
     });
 
     let events_tx = rx.recv().unwrap();

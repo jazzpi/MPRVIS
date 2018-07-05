@@ -23,14 +23,12 @@ static mut GUI_INST: Option<GUI> = None;
 /// # Safety
 ///
 /// This function may only be called once.
-pub unsafe fn start(width: i32, height: i32,
-                    events_tx: mpsc::Sender<mpsc::Sender<mpris::Event>>) {
+pub unsafe fn start(events_tx: mpsc::Sender<mpsc::Sender<mpris::Event>>) {
     let application = gtk::Application::new(
         "space.jazzpis.mprvis", gio::ApplicationFlags::empty()
     ).unwrap();
 
-    application.connect_startup(move |app| build_ui(app, width, height,
-                                                    &events_tx));
+    application.connect_startup(move |app| build_ui(app, &events_tx));
     application.connect_activate(|app| {
         GUI_INST.as_ref().unwrap().raise_window(app);
     });
@@ -38,9 +36,9 @@ pub unsafe fn start(width: i32, height: i32,
     application.run(&args().collect::<Vec<_>>());
 }
 
-unsafe fn build_ui(app: &gtk::Application, width: i32, height: i32,
+unsafe fn build_ui(app: &gtk::Application,
                    events_tx: &mpsc::Sender<mpsc::Sender<mpris::Event>>) {
-    GUI_INST = Some(GUI::new(app, width, height, events_tx));
+    GUI_INST = Some(GUI::new(app, events_tx));
 }
 
 pub struct GUI {
@@ -55,7 +53,7 @@ pub struct GUI {
 }
 
 impl GUI {
-    pub fn new(app: &gtk::Application, width: i32, height: i32,
+    pub fn new(app: &gtk::Application,
                events_tx: &mpsc::Sender<mpsc::Sender<mpris::Event>>) -> Self {
         let builder = gtk::Builder::new_from_file(
             "/home/jasper/dev/mprvis/assets/gui.glade"
@@ -178,7 +176,6 @@ impl GUI {
     }
 
     pub fn update_data(&self, data: mpris::Metadata) {
-        println!("Updating data: {:?}", data);
         self.song_title.set_text(
             &data.title.unwrap_or("No song playing!".to_string())
         );
@@ -191,7 +188,6 @@ impl GUI {
     }
 
     pub fn update_status(&self, playback_status: mpris::PlaybackStatus) {
-        println!("Updating status: {:?}", playback_status);
         let status = match playback_status {
             mpris::PlaybackStatus::Paused => "Paused",
             mpris::PlaybackStatus::Playing => "Playing",
@@ -232,9 +228,9 @@ impl GUI {
                 &img, 0, self.window.get_window().as_ref()
             ).unwrap();
             context.set_source_surface(&surf, x, y);
-        } else {
-            println!("Drawing cover from color");
         }
+        context.paint();
+        context.set_source_rgba(0., 0., 0., 0.5);
         context.paint();
         Inhibit(false)
     }

@@ -1,3 +1,5 @@
+use art;
+
 use std::collections::HashMap;
 use std::sync::mpsc;
 use std::thread;
@@ -7,7 +9,6 @@ use dbus;
 use dbus::{Connection, BusType};
 use dbus::arg::{self, RefArg};
 use dbus::stdintf::org_freedesktop_dbus::Properties;
-use curl::easy::Easy;
 
 #[derive(Debug, Clone)]
 pub enum PlaybackStatus {
@@ -49,6 +50,7 @@ pub struct Metadata {
 pub struct MPRIS {
     connection: dbus::Connection,
     tx: mpsc::Sender<Event>,
+    art_tx: mpsc::Sender<Metadata>,
 }
 
 impl MPRIS {
@@ -59,19 +61,22 @@ impl MPRIS {
          arg0='org.mpris.MediaPlayer2.Player'";
 
     pub fn start(tx: mpsc::Sender<Event>) {
+        let art_tx = art::start(tx.clone());
+
         let tx = tx.clone();
 
         thread::spawn(move || {
             let mpris = MPRIS {
                 connection: Connection::get_private(BusType::Session).unwrap(),
                 tx,
+                art_tx,
             };
 
             if mpris.tx.send(Event::Playback(mpris.get_status())).is_err() {
                 return;
             }
             let data = mpris.get_current();
-            mpris.fetch_art(&data);
+            mpris.art_tx.send(data.clone()).unwrap();
             if mpris.tx.send(Event::Data(data)).is_err() {
                 return;
             }
@@ -111,63 +116,11 @@ impl MPRIS {
             // We could parse the message itself... But it's incredibly
             // difficult due to dbus-rs's type system, so just fetch it again
             let data = self.get_current();
-            self.fetch_art(&data);
+            self.art_tx.send(data.clone()).unwrap(); // TODO: ? operator
             self.tx.send(Event::Data(data))?;
         }
 
         Ok(())
-    }
-
-    fn fetch_art(&self, data: &Metadata) {
-        if let Some(ref url) = data.art {
-            if url.starts_with("https://open.spotify.com/image") {
-                self.fetch_spot_art(url);
-            } else if url.starts_with("http://") ||
-                      url.starts_with("https://") {
-                self.fetch_web_art(url);
-            } else {
-                eprintln!("Unknown artUrl scheme: {}", url);
-            }
-        }
-    }
-
-    fn fetch_spot_art(&self, url: &str) {
-        self.fetch_web_art(&url.replacen("open.spotify.com", "i.scdn.co", 1));
-    }
-
-    fn fetch_web_art(&self, url: &str) {
-        let url = url.to_string();
-        let tx = self.tx.clone();
-        thread::spawn(move || {
-            let mut handle = Easy::new();
-            handle.url(&url).unwrap();
-            handle.get(true).unwrap();
-            handle.follow_location(true).unwrap();
-            let mut status = None;
-            {
-                let mut transfer = handle.transfer();
-                transfer.header_function(|new_data| {
-                    // new_data is always one header line
-                    if let Ok(s) = String::from_utf8(new_data.to_vec()) {
-                        if s.starts_with("HTTP/1.1") {
-                            status = Some(s[9..].trim().to_string());
-                        }
-                    }
-                    true
-                }).unwrap();
-                transfer.write_function(|new_data| {
-                    tx.send(Event::ArtData(new_data.to_vec()));
-                    Ok(new_data.len())
-                }).unwrap();
-                transfer.perform().unwrap();
-            }
-            if status == Some("200 OK".to_string()) {
-                tx.send(Event::ArtDone(true));
-            } else {
-                eprintln!("Error while fetching art: {:?}", status);
-                return
-            }
-        });
     }
 
     pub fn get_status(&self) -> PlaybackStatus {
@@ -260,7 +213,6 @@ impl MPRIS {
         (artist, featured)
     }
 }
-
 
 #[cfg(test)]
 mod tests {

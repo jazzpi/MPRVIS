@@ -15,6 +15,7 @@ pub fn init() -> Connection {
 
 pub mod mpris;
 pub mod gui;
+mod art;
 
 #[cfg(test)]
 mod tests {
